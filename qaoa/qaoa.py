@@ -14,7 +14,7 @@ from qiskit_aer import Aer
 from qaoa.initialstates import InitialState
 from qaoa.mixers import Mixer
 from qaoa.problems import Problem
-from qaoa.util import Statistic
+from qaoa.util import Statistic, BitFlip
 
 
 class OptResult:
@@ -90,6 +90,7 @@ class QAOA:
         shots=1024,
         cvar=1,
         memorysize=-1,
+        flip = False
     ) -> None:
         """
         A QAO-Ansatz consist of these parts:
@@ -121,6 +122,7 @@ class QAOA:
         self.initialstate = initialstate
         self.initialstate.setNumQubits(self.problem.N_qubits)
         self.mixer.setNumQubits(self.problem.N_qubits)
+        
 
         self.parameterized_circuit = None
         self.parameterized_circuit_depth = 0
@@ -151,6 +153,11 @@ class QAOA:
 
         self.optimization_results = {}
         self.memory_lists = []
+
+        self.flipper = BitFlip()
+        self.flipper.setNumQubits(self.problem.N_qubits)
+        self.bitflips = []
+        self.flip = flip
 
     def exp_landscape(self):
         ### at depth p = 1
@@ -234,6 +241,10 @@ class QAOA:
             )
             self.parameterized_circuit.compose(tmp_circuit, inplace=True)
 
+            if self.flip and (d != (depth-1)):
+                    self.flipper.create_circuit(self.bitflips[d])
+                    self.parameterized_circuit.compose(self.flipper.circuit, inplace=True)
+
             if self.usebarrier:
                 self.circuit.barrier()
 
@@ -298,7 +309,7 @@ class QAOA:
         """
         jres = job.result()
         counts_list = jres.get_counts()
-
+        
         if self.memorysize > 0:
             for i, _ in enumerate(jres.results):
                 memory_list = jres.get_memory(experiment=i)
@@ -376,11 +387,20 @@ class QAOA:
             res = self.local_opt(angles0)
 
             self.optimization_results[self.current_depth + 1].compute_best_index()
+    
+            if self.flip:
+                self.flipper.boost_samples(
+                    problem=self.problem, 
+                    samples=self.get_optimal_solutions()
+                )
+                self.bitflips.append(self.flipper.get_best_bitflip())
 
             LOG.info(
                 f"cost(depth { self.current_depth + 1} = {res.fun}",
                 func=self.optimize.__name__,
             )
+            print(self.get_optimal_solutions())
+            print(self.get_cost(self.get_optimal_solutions()))
 
             self.current_depth += 1
 
@@ -539,3 +559,77 @@ class QAOA:
             opt_sols.append(best_sols[i])
         opt_sols = [item for sublist in opt_sols for item in sublist]
         return np.unique(opt_sols)
+
+
+    def cost_hist(self, samples):
+        cost_count = {}
+        for string, count in zip(samples.keys(), samples.values()):
+            cost = int(self.problem.cost(string[::-1]))
+            cost = str(cost)
+            cost_count[cost] = cost_count.get(cost, 0) + count
+        return cost_count
+    
+
+    def get_cost(self, samples):
+        cost = []
+        for string in samples:
+            cost.append(self.problem.cost(string[::-1]))
+        return cost
+        
+
+    def post_processing(self, K = 5):
+        best_sols = self.get_optimal_solutions()
+        boosted_sols = self.flipper.boost_samples(
+            problem=self.problem, 
+            samples=best_sols, 
+            K=K
+        )
+        return boosted_sols
+
+        
+
+
+    """    
+    def best_bitlfips(self, old_string, new_string, cost_diff):
+        old = np.array([int(bit) for bit in old_string])
+        new = np.array([int(bit) for bit in new_string])
+        xor = []
+
+        for a, b in zip(old, new):
+            xor.append((a and not b) or (not a and b))
+        
+        xor_str = "".join(map(str, xor))
+
+        self.bitflips[str(cost_diff)] = xor
+    
+
+    def get_best_bitflips(self):
+        return self.bitflips
+    
+    def post_processing(self, samples, K = 10):
+        self.bitflips.clear()
+        altered_hist = {}
+        for best_sol, count in zip(samples.keys(), samples.values()):
+            bitstring_arr = np.array([int(bit) for bit in best_sol])
+            bitstring_str = "".join(map(str, bitstring_arr))
+            best_cost = self.problem.cost(bitstring_str)
+            old_bitstring = bitstring_str
+            old_cost = best_cost
+
+            for _ in range (K):
+                shuffled_indeces = np.arange(self.problem.N_qubits)
+                np.random.shuffle(shuffled_indeces)
+                for i in shuffled_indeces:
+                    bitstring_altered_arr = np.copy(bitstring_arr)
+                    bitstring_altered_arr[i] = not(bitstring_arr[i])
+
+                    bitstring_altered_str = "".join(map(str, bitstring_altered_arr))
+                    new_cost = self.problem.cost(bitstring_altered_str)
+                    
+                    if new_cost > best_cost:
+                        best_cost = new_cost
+                        bitstring_arr = bitstring_altered_arr
+                        bitstring_str = bitstring_altered_str
+            self.best_bitlfips(old_bitstring, bitstring_str, best_cost - old_cost)
+            altered_hist[bitstring_str] = altered_hist.get(bitstring_str, 0) + count
+        return altered_hist"""
