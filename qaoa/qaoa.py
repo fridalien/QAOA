@@ -14,7 +14,7 @@ from qiskit_aer import Aer
 from qaoa.initialstates import InitialState
 from qaoa.mixers import Mixer
 from qaoa.problems import Problem
-from qaoa.util import Statistic, BitFlip
+from qaoa.util import Statistic, BitFlip, post_processing
 
 
 class OptResult:
@@ -90,7 +90,8 @@ class QAOA:
         shots=1024,
         cvar=1,
         memorysize=-1,
-        flip = False
+        flip=False,
+        post=False,
     ) -> None:
         """
         A QAO-Ansatz consist of these parts:
@@ -153,10 +154,15 @@ class QAOA:
         self.optimization_results = {}
         self.memory_lists = []
 
-        self.flipper = BitFlip()
-        self.flipper.setNumQubits(self.problem.N_qubits)
-        self.bitflips = []
         self.flip = flip
+        self.flipper = BitFlip(self.problem.N_qubits)
+        self.bitflips = []
+
+        self.post = post
+        self.Exp_post_processed = None
+        self.Var_post_processed = None
+        self.samplecount_hists = {}
+        self.last_hist = {}
 
     def exp_landscape(self):
         ### at depth p = 1
@@ -323,6 +329,8 @@ class QAOA:
                         if self.memorysize < 1:
                             break
 
+        self.last_hist = counts_list
+
         if isinstance(counts_list, list):
             expectations = []
             variances = []
@@ -387,23 +395,32 @@ class QAOA:
 
             res = self.local_opt(angles0)
 
-            self.optimization_results[self.current_depth + 1].compute_best_index()
+            self.samplecount_hists[self.current_depth + 1] = self.last_hist
 
-            if self.flip:
-                hist = self.hist(self.get_angles(self.current_depth + 1), self.shots)
-                string = max(hist, key=hist.get)
-                self.flipper.boost_samples(
-                    problem=self.problem,
-                    samples=[string],
-                )
-                self.bitflips.append(self.flipper.get_best_bitflip())
+            self.optimization_results[self.current_depth + 1].compute_best_index()
 
             LOG.info(
                 f"cost(depth { self.current_depth + 1} = {res.fun}",
                 func=self.optimize.__name__,
             )
 
+            if self.flip:
+                hist = self.samplecount_hists[self.current_depth + 1]
+                string = max(hist, key=hist.get)
+                boosted = self.flipper.boost_samples(
+                    problem=self.problem,
+                    string=string,
+                )
+                string_xor = self.flipper.xor(string, boosted)
+                self.bitflips.append(string_xor)
+
             self.current_depth += 1
+
+        if self.post:
+            samples = self.samplecount_hists[self.current_depth]
+            post_processing(self, samples=samples, K=self.post)
+            self.Exp_post_processed = -self.stat.get_CVaR()
+            self.Var_post_processed = self.stat.get_Variance()
 
     def local_opt(self, angles0):
         """
@@ -560,12 +577,3 @@ class QAOA:
             opt_sols.append(best_sols[i])
         opt_sols = [item for sublist in opt_sols for item in sublist]
         return np.unique(opt_sols)
-
-    def post_processing(self, K = 5):
-        best_sols = self.get_optimal_solutions()
-        boosted_sols = self.flipper.boost_samples(
-            problem=self.problem,
-            samples=best_sols,
-            K=K
-        )
-        return boosted_sols

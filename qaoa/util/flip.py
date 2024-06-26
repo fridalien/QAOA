@@ -3,101 +3,69 @@ from qiskit import QuantumCircuit, QuantumRegister
 
 
 class BitFlip:
-    def __init__(self) -> None:
-        self.bitflips = {}
+    def __init__(self, n) -> None:
         self.circuit = None
-
-    
-    def setNumQubits(self, n):
-        """
-        Set the number of qubits for the quantum circuit.
-
-        Args:
-            n (int): The number of qubits to set.
-        """
         self.N_qubits = n
 
-    def boost_samples(self, problem, samples: list[str] | str, K: int = 10) -> list:
+    def boost_samples(self, problem, string: str, K: int = 5) -> str:
         """
-        Random bitflips on string/list og strings to increase cost.
-        Calls best_bitflips() that updates self.bitflips
-
-        imput:
-            - problem: BaseType Problem 
-            - samples: string or list og strings
-            - K: number of iteratations through string while flipping 
-        returns:
-            - list of strings after bitflips
-        """
-        self.bitflips.reset()
-        boosted = []
-
-        if type(samples) == str:
-            samples = list(samples)
-
-        for best_sol in samples:
-            string_arr = np.array([int(bit) for bit in best_sol])
-            string = "".join(map(str, string_arr))
-            old_string = string
-            best_cost = problem.cost(string[::-1])
-
-            for _ in range (K):
-                shuffled_indeces = np.arange(len(best_sol))
-                np.random.shuffle(shuffled_indeces)
-
-                for i in shuffled_indeces:
-                    string_arr_altered = np.copy(string_arr)
-                    string_arr_altered[i] = not(string_arr[i])
-                    string_altered = "".join(map(str, string_arr_altered))
-                    new_cost = problem.cost(string_altered[::-1])
-                    
-                    if new_cost > best_cost: 
-                        best_cost = new_cost
-                        string_arr = string_arr_altered
-                        string = string_altered
-                            
-            self.best_bitlfips(old_string, string, float(best_cost))
-            boosted.append(string)
-        return boosted
-    
-
-    def best_bitlfips(self, old_string: str, new_string: str, cost: float) -> None:
-        """
-        Finds (old_string XOR new_string)
-        Updates self.bitstrings with cost of new_string as key and XOR-string as value
+        Random bitflips on string/list of strings to increase cost.
 
         input:
-            - old_string: string before bitflips
-            - new_string: string after bitflips 
-            - cost: cost of new_string
+            - problem: BaseType Problem 
+            - samples: string or list of strings
+            - K: number of iteratations through string while flipping 
         returns:
-            None
+            - string after bitflips
+        """
+        string_arr = np.array([int(bit) for bit in string])
+        old_string = string
+        cost = problem.cost(string[::-1])
+
+        for _ in range (K):
+            shuffled_indices = np.arange(self.N_qubits)
+            np.random.shuffle(shuffled_indices)
+
+            for i in shuffled_indices:
+                string_arr_altered = np.copy(string_arr)
+                string_arr_altered[i] = not(string_arr[i])
+                string_altered = "".join(map(str, string_arr_altered))
+                new_cost = problem.cost(string_altered[::-1])
+
+                if new_cost > cost:
+                    cost = new_cost
+                    string_arr = string_arr_altered
+                    string = string_altered
+
+        return string
+    
+    def xor(self, old_string, new_string) -> None:
+        """
+        Finds (old_string XOR new_string)
+
+        input:
+            - old_string (str): string before bitflips
+            - new_string (str): string after bitflips
+        returns:
+            - list of qubits on which to apply X-gate
+                if 1 at pos n - i, apply X-gate to qubit i
+                if 0 at pos n - j, do nothing to qubit j
         """
         old = np.array([int(bit) for bit in old_string])
         new = np.array([int(bit) for bit in new_string])
         xor = []
 
         for a, b in zip(old, new):
-            xor.append((a and not b) or (not a and b))
+            xor.append((a and (not b)) or ((not a) and b))
 
-        self.bitflips[str(cost)] = xor
-
-
-    def get_best_bitflip(self) -> str:
-        """
-        Returns the XOR-string with highest cost
-        """
-        max_diff = max([float(i) for i in self.bitflips.keys()])
-        best_xor = self.bitflips[str(max_diff)]
-        return best_xor
+        return xor
     
-
-    def create_circuit(self, string: str) -> None:
+    def create_circuit(self, xor: list[int | bool]) -> None:
         """
         Creates quantum circuit that performs bitflips
 
         input:
-            - string to be applied to circuit
+            - xor (list): list of qubits on which to apply X-gate
                 if 1 at pos n - i, apply X-gate to qubit i
                 if 0 at pos n - j, do nothing to qubit j
         returns:
@@ -105,7 +73,6 @@ class BitFlip:
         """
         q = QuantumRegister(self.N_qubits)
         self.circuit = QuantumCircuit(q)
-        xor = np.array([int(bit) for bit in string[::-1]])
-        for i, x in enumerate(xor):
-            if x:
-                self.circuit.x(i)
+        indices_flip = np.where(xor[::-1])[0]
+        if np.any(indices_flip):
+            self.circuit.x(indices_flip)
