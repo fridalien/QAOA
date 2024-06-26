@@ -3,20 +3,20 @@ from qiskit import QuantumCircuit, QuantumRegister
 
 
 class BitFlip:
-    def __init__(self, n) -> None:
+    def __init__(self, n):
         self.circuit = None
         self.N_qubits = n
 
-    def boost_samples(self, problem, string: str, K: int = 5) -> str:
+    def boost_samples(self, problem, string, K = 5):
         """
         Random bitflips on string/list of strings to increase cost.
 
         input:
-            - problem: BaseType Problem 
-            - samples: string or list of strings
-            - K: number of iteratations through string while flipping 
+            - problem: BaseType Problem
+            - string (str): string or list of strings
+            - K (int): number of iteratations through string while flipping
         returns:
-            - string after bitflips
+            - str: string after bitflips
         """
         string_arr = np.array([int(bit) for bit in string])
         old_string = string
@@ -38,8 +38,8 @@ class BitFlip:
                     string = string_altered
 
         return string
-    
-    def xor(self, old_string, new_string) -> None:
+
+    def xor(self, old_string, new_string):
         """
         Finds (old_string XOR new_string)
 
@@ -59,7 +59,7 @@ class BitFlip:
             xor.append((a and (not b)) or ((not a) and b))
 
         return xor
-    
+
     def create_circuit(self, xor: list[int | bool]) -> None:
         """
         Creates quantum circuit that performs bitflips
